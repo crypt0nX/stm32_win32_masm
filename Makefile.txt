@@ -1,0 +1,2 @@
+ ml /c /coff /Cp /nologo .\main.asm
+link /SUBSYSTEM:WINDOWS /RELEASE /VERSION:4.0 resource.res /MACHINE:IX86 .\main.obj
