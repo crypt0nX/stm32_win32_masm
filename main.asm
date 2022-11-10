@@ -1,4 +1,4 @@
-.486
+.386
 .model flat,stdcall
 option casemap:none
 
@@ -9,57 +9,79 @@ include windows.inc
 include user32.inc
 include kernel32.inc
 include masm32.inc
+include	Comdlg32.inc
+
+ 
+ 
 
 includelib user32.lib
 includelib kernel32.lib
 includelib masm32.lib
+includelib Comdlg32.lib
 include \masm32\macros\macros.asm
 ;///////////////////////////////////////////////////////////////////////////////
 ; EQU 定义
 ;///////////////////////////////////////////////////////////////////////////////
-ICO_MAIN 	equ 103;图标
-DLG_MAIN 	equ 101
-IDM_ABOUT 	equ 40001
-IDM_EXIT	equ 40002
-IDC_COMBO1  equ 1001 ;串口
-IDC_COMBO2  equ 1003 ;波特率
-IDC_COMBO3  equ 1004 ;校验位
-IDC_COMBO4  equ 1005 ;数据位
-IDC_COMBO5  equ 1006 ;停止位
-IDC_LIST1   equ 1008 ;聊天内容
-IDC_EDIT   equ 1009 ;聊天输入框
-IDC_BTN_OPEN equ 1011 ;打开串口按钮
+ICO_MAIN 		equ 103;图标
+DLG_MAIN 		equ 101
+IDM_ABOUT 		equ 40001
+IDM_EXIT		equ 40002
+IDC_COMBO1  	equ 1001 ;串口
+IDC_COMBO2  	equ 1003 ;波特率
+IDC_COMBO3  	equ 1004 ;校验位
+IDC_COMBO4  	equ 1005 ;数据位
+IDC_COMBO5  	equ 1006 ;停止位
+IDC_LIST1   	equ 1008 ;聊天内容
+IDC_EDIT   		equ 1009 ;聊天输入框
+IDC_BTN_OPEN 	equ 1011 ;打开串口按钮
 
+BUTTON_RED		equ 2001;红色按钮
+BUTTON_GREEN	equ 2002;绿色按钮
+BUTTON_BLUE		equ 2003;蓝色按钮
+BUTTON_WHITE	equ 2004;白色按钮
+BUTTON_YELLOW	equ 2005;黄色按钮
+BUTTON_PURPLE	equ 2006;紫色按钮
+BUTTON_CYAN		equ 2007;青色按钮
+BUTTON_DARK		equ 2008;暗色按钮
+BUTTON_SYNC_TIME 	equ 2009;同步时间
+BUTTON_SAVE_FILE 	equ 2010;存入文件
+BUTTON_READ_FILE 	equ 2011;读取文件
 
-BUTTON_RED equ 2001;红色按钮
-BUTTON_GREEN equ 2002;绿色按钮
-BUTTON_BLUE equ 2003;蓝色按钮
-BUTTON_WHITE equ 2004;白色按钮
-BUTTON_YELLOW equ 2005;黄色按钮
-BUTTON_PURPLE equ 2006;紫色按钮
-BUTTON_CYAN equ 2007;青色按钮
-BUTTON_DARK equ 2008;暗色按钮
+DATA_FRAME_SOH	equ "A"
+DATA_FRAME_EOF	equ "Z"
+DATA_FRAME_ESC	equ "E"
 
-BUTTON_SYNC_TIME equ 2009;暗色按钮
 ;///////////////////////////////////////////////////////////////////////////////
 ; 数据段
 ;///////////////////////////////////////////////////////////////////////////////
 .data
-Parity	BYTE EVENPARITY,ODDPARITY,NOPARITY,MARKPARITY,SPACEPARITY
-szFromatTime db  'P6%02d%02d%02d', 0
+Parity			BYTE EVENPARITY,ODDPARITY,NOPARITY,MARKPARITY,SPACEPARITY
+szFromatTime	db  'P6%02d%02d%02d', 0
+szFormatCount	db	'%d', 0 
+szFormatLength	db	'%d',	0
+szCaption		db	'写入成功',0
+szFileName		db	MAX_PATH dup (?)
+szFilter		db	'Image Files(*.jpg)',0,'*.jpg',0,'All Files(*.*)',0,'*.*',0,0
+szDefExt		db	'jpg',0
+szNewFile	db	'_tmp_.jpg',0
+szErrOpenFile	db	'无法打开源文件!',0
+szErrCreateFile	db	'无法创建新的文件!',0
+szSuccees	db	'文件转换成功，新的文本文件保存为',0dh,0ah,'%s',0
+szSucceesCap	db	'提示',0
+szDATA_FRAME_EOF	db	'Z', 0
 
 
 .data?
-hInstance 	dd ?
-hIcon 		dd ?
-hWinMain 	dd ?
-hCom		dd ? ;串口句柄
+hInstance 		dd ?
+hIcon 			dd ?
+hWinMain 		dd ?
+hCom			dd ? ;串口句柄
 g_bOpened		dd ? ;是否打开串口
-hCloseEvent dd ? ;串口关闭事件
-g_olRead	OVERLAPPED <>
-g_olWait	OVERLAPPED <>
-g_olWrite	OVERLAPPED <>
-g_hListBox	dd ? ;
+hCloseEvent 	dd ? ;串口关闭事件
+g_olRead		OVERLAPPED <>
+g_olWait		OVERLAPPED <>
+g_olWrite		OVERLAPPED <>
+g_hListBox		dd ? ;
 sysTime SYSTEMTIME <>
 
 
@@ -229,7 +251,7 @@ _ReadData EndP
 ;///////////////////////////////////////////////////////////////////////////////
 _WriteData proc _lpBuffer,_nSize
 	local @nBytesWritten
-	invoke WaitForSingleObject,g_olWrite.hEvent,2000
+	invoke WaitForSingleObject,g_olWrite.hEvent,10000
 	.if eax==WAIT_TIMEOUT ;发送超时?
 		ret
 	.endif
@@ -250,7 +272,7 @@ _WriteData EndP
 ;///////////////////////////////////////////////////////////////////////////////
 ;读写数据线程
 ;///////////////////////////////////////////////////////////////////////////////
-_ReadThread proc _lParam	
+_ReadThread	proc _lParam	
 	local @nBytesRead,@dwEvent,@dwError
 	local @cs:COMSTAT
 	
@@ -280,7 +302,7 @@ _ReadThread EndP
 
 ;///////////////////////////////////////////////////////////////////////////////
 ;打开串口
-_OpenCom proc uses esi
+_OpenCom	proc uses esi
 	local @hCombo,@index,@hButton
 	local @szCom[20]:CHAR
 	local @dwThreadID
@@ -394,10 +416,10 @@ _OpenCom proc uses esi
 	.endif
 	
 	Ret
-_OpenCom EndP
+_OpenCom	EndP
 ;///////////////////////////////////////////////////////////////////////////////
 ;关闭
-_CloseCom proc
+_CloseCom	proc
 	.if g_bOpened
 		mov g_bOpened,FALSE
 		invoke SetCommMask,hCom,0
@@ -406,13 +428,302 @@ _CloseCom proc
 		invoke CloseHandle,hCom
 	.endif
 	Ret
-_CloseCom EndP
+_CloseCom	EndP
+
+_OpenFileSelectUI	proc
+		local	@stOF:OPENFILENAME
+		invoke	RtlZeroMemory,addr @stOF,sizeof @stOF
+		mov	@stOF.lStructSize,sizeof @stOF
+		push	hWinMain
+		pop	@stOF.hwndOwner
+		mov	@stOF.lpstrFilter,offset szFilter
+		mov	@stOF.lpstrFile,offset szFileName
+		mov	@stOF.nMaxFile,MAX_PATH
+		mov	@stOF.Flags,OFN_FILEMUSTEXIST or OFN_PATHMUSTEXIST
+		invoke GetOpenFileName,addr @stOF
+		ret
+_OpenFileSelectUI	endp
+
+_FormatText	proc	uses esi _lpData,_dwSize,_hFile
+		local	@szBuffer[2048]:byte,@dwBytesWrite
+
+		mov	esi,_lpData
+		mov	ecx,_dwSize
+		lea	edi,@szBuffer
+		xor	edx,edx
+		cld
+_LoopBegin:
+		or	ecx,ecx
+		jz	_WriteLine
+		lodsb
+		dec	ecx
+		cmp	al,DATA_FRAME_EOF		;遇到Z则拓展位EZ
+		jz	_ProcessEOF
+		cmp	al,DATA_FRAME_SOH		;遇到A则扩展为EA
+		jz	_ProcessSOH
+		cmp	al,DATA_FRAME_ESC		;遇到E则扩展为EE
+		jz	_ProcessESC
+		stosb
+		inc	edx
+		cmp	edx,sizeof @szBuffer-2
+		jae	_WriteLine	;行缓冲区满则保存
+		jmp	_LoopBegin
+_ProcessSOH:
+		mov	ax,"AE"
+		stosw
+		inc	edx
+		inc	edx
+		jmp	_LoopBegin
+_ProcessEOF:
+		mov	ax,"ZE"
+		stosw
+		inc	edx
+		inc	edx
+		jmp	_LoopBegin
+_ProcessESC:
+		mov	ax,"EE"
+		stosw
+		inc	edx
+		inc	edx
+		jmp	_LoopBegin
+_WriteLine:
+		push	ecx
+		.if	edx
+			invoke	WriteFile,_hFile,addr @szBuffer,edx,addr @dwBytesWrite,NULL
+		.endif
+		lea	edi,@szBuffer
+		xor	edx,edx
+		pop	ecx
+		or	ecx,ecx
+		jnz	_LoopBegin
+		ret
+
+_FormatText	endp
+
+_ProcessFileBeforeSend	proc
+		local	@hFile,@hFileNew,@dwBytesRead
+		local	@szNewFile[MAX_PATH]:byte
+		local	@szReadBuffer[2048]:byte
+
+;********************************************************************
+; 打开文件
+;********************************************************************
+		invoke	CreateFile,addr szFileName,GENERIC_READ,FILE_SHARE_READ,0,\
+			OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL,0
+		.if	eax ==	INVALID_HANDLE_VALUE
+			invoke	MessageBox,hWinMain,addr szErrOpenFile,NULL,MB_OK or MB_ICONEXCLAMATION
+			ret
+		.endif
+		mov	@hFile,eax
+;********************************************************************
+; 创建输出文件
+;********************************************************************
+		invoke	lstrcpy,addr @szNewFile,addr szFileName
+		invoke	lstrcat,addr @szNewFile,addr szNewFile
+
+		invoke	lstrcpy,addr szFileName,addr @szNewFile	;修改全局文件名 
+		invoke	CreateFile,addr @szNewFile,GENERIC_WRITE,FILE_SHARE_READ,\
+			0,CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL,0
+		.if	eax ==	INVALID_HANDLE_VALUE
+			invoke	MessageBox,hWinMain,addr szErrCreateFile,NULL,MB_OK or MB_ICONEXCLAMATION
+			invoke	CloseHandle,@hFile
+			ret
+		.endif
+		mov	@hFileNew,eax
+;********************************************************************
+; 循环读出文件并处理每个字节
+;********************************************************************
+		xor	eax,eax
+		mov	@dwBytesRead,eax
+		.while	TRUE
+			lea	esi,@szReadBuffer
+			invoke	ReadFile,@hFile,esi,sizeof @szReadBuffer,addr @dwBytesRead,0
+			.break	.if ! @dwBytesRead
+			invoke	_FormatText,esi,@dwBytesRead,@hFileNew
+		.endw
+		invoke	CloseHandle,@hFile
+		invoke	CloseHandle,@hFileNew
+		;invoke	wsprintf,addr @szReadBuffer,addr szSuccees,addr @szNewFile
+		;invoke	MessageBox,hWinMain,addr @szNewFile,addr szSucceesCap,MB_OK
+		ret
+_ProcessFileBeforeSend	EndP
+
+_SendFile	proc	uses ebx esi edi _fileName
+	local	@maxByteEachProcess
+	local	@szReadBuffer[4096]:byte
+	local	@szSendBuffer[1+3+512+1]:byte
+	local	@szSendBufferForEmpty[1+3+512+1]:byte
+	local	@szSendBufferSuffix
+	local	@szDataLengthBuffer
+	local	@hFileHandle
+	local	@ByteRead
+
+	local	@totalDataLength
+	local	@sendCount
+	local	@leftData
+
+	mov	@maxByteEachProcess, 128
+	
+	invoke	CreateFile,addr szFileName, GENERIC_READ,FILE_SHARE_READ,0,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL,0
+	.if(eax != INVALID_HANDLE_VALUE)
+		mov	@hFileHandle, eax
+	.endif
+	invoke	GetFileSize,@hFileHandle,NULL
+	dec eax
+	mov	@totalDataLength, eax
+	xor	edx, edx
+	mov	eax, @totalDataLength
+	mov	ecx, @maxByteEachProcess
+	div	ecx
+	mov @leftData, edx
+	mov @sendCount, eax
+	invoke	SetFilePointer,@hFileHandle,0,NULL,FILE_BEGIN   ; 取第一个字符
+	mov	[@szSendBuffer+0], DATA_FRAME_SOH	;移动数据帧头 
+	mov [@szSendBufferSuffix+0], DATA_FRAME_EOF
+
+	.while TRUE
+		invoke	ReadFile, @hFileHandle, addr @szReadBuffer, @maxByteEachProcess, addr @ByteRead, 0
+		.if(@sendCount > 0)
+			xor	eax, eax
+			mov	eax, 7; pow(2, 7)=@maxByteEachProcess
+			invoke	wsprintf,addr @szDataLengthBuffer,addr szFormatLength,eax
+			xor	eax, eax
+			xor ebx, ebx
+			xor ecx, ecx
+			lea eax, @szDataLengthBuffer
+			lea ebx, @szSendBuffer
+			inc ebx
+			cld                  
+			mov esi, eax
+			mov edi, ebx
+			mov ecx, 1
+			rep movsb; 		三次缓冲区复制操作
+
+			xor eax, eax
+			xor ebx, ebx
+			xor ecx, ecx
+			lea eax, @szReadBuffer
+			lea ebx, @szSendBuffer
+			add ebx, 2
+			cld                  
+			mov esi, eax
+			mov edi, ebx
+			mov ecx, @maxByteEachProcess
+			rep movsb
+
+			xor eax, eax
+			xor ebx, ebx
+			xor ecx, ecx
+			xor edx, edx
+			mov edx, @maxByteEachProcess
+			add edx, 2
+			lea eax, @szSendBufferSuffix
+			lea ebx, @szSendBuffer
+			add ebx, edx
+			cld                  
+			mov esi, eax
+			mov edi, ebx
+			mov ecx, 1
+			rep movsb
+			xor eax, eax
+			mov eax, @maxByteEachProcess
+			add eax, 3
+		;	invoke	MessageBox, hWinMain, addr @szSendBuffer, addr szCaption, MB_OK
+			invoke	_WriteData, addr @szSendBuffer, eax
+			dec @sendCount
+		.else
+			xor	eax, eax
+			mov	eax, 7
+			invoke	wsprintf,addr @szDataLengthBuffer,addr szFormatLength,eax
+			xor	eax, eax
+			xor ebx, ebx
+			xor ecx, ecx
+			lea eax, @szDataLengthBuffer
+			lea ebx, @szSendBuffer
+			inc ebx
+			cld                  
+			mov esi, eax
+			mov edi, ebx
+			mov ecx, 1
+			rep movsb
+
+
+			xor eax, eax
+			xor ebx, ebx
+			mov eax, @leftData
+			mov ebx, @maxByteEachProcess
+			sub ebx, eax
+			.while TRUE
+			mov [@szReadBuffer+eax],"0"		;padding至128字节
+			inc eax
+			dec ebx
+			.break	.if	!ebx
+			.endw
+
+			xor eax, eax
+			xor ebx, ebx
+			xor ecx, ecx
+			lea eax, @szReadBuffer
+			lea ebx, @szSendBuffer
+			add ebx, 2
+			cld                  
+			mov esi, eax
+			mov edi, ebx
+			mov ecx, @maxByteEachProcess
+			rep movsb
+
+			xor eax, eax
+			xor ebx, ebx
+			xor ecx, ecx
+			xor edx, edx
+			mov edx, @maxByteEachProcess
+			add edx, 2
+			lea eax, @szSendBufferSuffix
+			lea ebx, @szSendBuffer
+			add ebx, edx
+			cld                  
+			mov esi, eax
+			mov edi, ebx
+			mov ecx, 1
+			rep movsb
+			xor eax, eax
+			mov eax, @maxByteEachProcess
+			add eax, 3
+			;invoke	MessageBox, hWinMain, addr @szSendBuffer, addr szCaption, MB_OK
+			invoke	_WriteData, addr @szSendBuffer, eax
+			.break
+		.endif
+		invoke	Sleep, 100
+		.break	.if ! @ByteRead
+	.endw
+	invoke	MessageBox, hWinMain, addr szCaption, addr szCaption, MB_OK
+	;invoke	wsprintf,addr @szReadBuffer,addr szFormatCount,sizeof @szSendBuffer
+	;invoke	MessageBox, hWinMain, addr @szSendBuffer, addr szCaption, MB_OK
+	invoke	CloseHandle, @hFileHandle
+	ret
+_SendFile EndP
+
+
+_ReadFile	proc	uses ebx esi edi _fileName
+	local @sendbuff[255]:BYTE
+	mov [@sendbuff+0], "A"; 移动进缓冲区
+	mov [@sendbuff+1], "1"		
+	mov [@sendbuff+2], "#"		
+	mov [@sendbuff+3], "$"		
+	mov [@sendbuff+4], "Z"
+	mov eax, sizeof @sendbuff
+	invoke _WriteData,addr @sendbuff,eax
+_ReadFile EndP
 
 ;///////////////////////////////////////////////////////////////////////////////
 _ProcDlgMain proc uses ebx edi esi hWnd,wMsg,wParam,lParam	
 	local @hEdit
 	local @sendbuff[255]:CHAR
 	local @timebuff[255]:CHAR
+
+	local @ThreadIDSaveFile
+	local @ThreadIDReadFile
+
 	mov	eax,wMsg
 	.if	eax == WM_CLOSE
 		invoke 	EndDialog,hWnd,NULL
@@ -426,25 +737,25 @@ _ProcDlgMain proc uses ebx edi esi hWnd,wMsg,wParam,lParam
 			call _CloseCom
 			invoke	EndDialog,hWnd,NULL
 		.elseif ax == IDM_ABOUT	;关于
-			invoke AboutBox,hWnd,hInstance,hIcon,CTXT("嵌入式实验"),CTXT("串口通信"),\
+			invoke	AboutBox,hWnd,hInstance,hIcon,CTXT("嵌入式实验"),CTXT("串口通信"),\
 				CTXT("by crypt0n")
 		.elseif ax == IDC_BTN_OPEN ;打开串口
-			call _OpenCom
+			call	_OpenCom
 		.elseif ax == IDOK ;发送
-			invoke GetDlgItem,hWnd,IDC_EDIT
-			mov @hEdit,eax
-			invoke GetWindowText,@hEdit,addr @sendbuff,sizeof @sendbuff			
-			invoke SendMessage,g_hListBox,LB_ADDSTRING,0,addr @sendbuff
-			invoke GetWindowTextLength,@hEdit
-			invoke _WriteData,addr @sendbuff,eax
+			invoke	GetDlgItem,hWnd,IDC_EDIT
+			mov		@hEdit,eax
+			invoke	GetWindowText,@hEdit,addr @sendbuff,sizeof @sendbuff			
+			invoke 	SendMessage,g_hListBox,LB_ADDSTRING,0,addr @sendbuff
+			invoke 	GetWindowTextLength,@hEdit
+			invoke 	_WriteData,addr @sendbuff,eax
 		.elseif ax == BUTTON_RED; 红按钮
-			mov [@sendbuff+1], "P"; 移动进缓冲区
+			mov	[@sendbuff+1], "P"; 移动进缓冲区
 			mov [@sendbuff+2], "3"
 			mov [@sendbuff+3], "r"
 			mov [@sendbuff+4], "e"
 			mov [@sendbuff+5], "d"
 			mov eax, sizeof @sendbuff
-			invoke _WriteData,addr @sendbuff,eax
+			invoke	_WriteData,addr @sendbuff,eax
 		.elseif ax == BUTTON_GREEN; 绿按钮
 			mov [@sendbuff+1], "P"; 移动进缓冲区
 			mov [@sendbuff+2], "5"
@@ -525,6 +836,12 @@ _ProcDlgMain proc uses ebx edi esi hWnd,wMsg,wParam,lParam
 			invoke	wsprintf,addr @timebuff,addr szFromatTime,eax,ebx,ecx
 			invoke _WriteData,addr @timebuff,eax
 			invoke MessageBox, NULL, addr @timebuff, addr @timebuff, MB_OK
+		.elseif ax == BUTTON_SAVE_FILE
+			invoke	_OpenFileSelectUI
+			;invoke	_ProcessFileBeforeSend
+			invoke	CreateThread, NULL, 0, offset _SendFile, NULL, NULL, addr @ThreadIDSaveFile
+		.elseif ax == BUTTON_READ_FILE
+			invoke	CreateThread, NULL, 0, offset _ReadFile, NULL, NULL, addr @ThreadIDSaveFile
 		.endif
 
 	.endif
