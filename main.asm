@@ -1,4 +1,4 @@
-.386
+.686
 .model flat,stdcall
 option casemap:none
 
@@ -10,7 +10,7 @@ include user32.inc
 include kernel32.inc
 include masm32.inc
 include	Comdlg32.inc
-
+include base64.inc
  
  
 
@@ -19,6 +19,7 @@ includelib kernel32.lib
 includelib masm32.lib
 includelib Comdlg32.lib
 include \masm32\macros\macros.asm
+
 ;///////////////////////////////////////////////////////////////////////////////
 ; EQU 定义
 ;///////////////////////////////////////////////////////////////////////////////
@@ -57,18 +58,24 @@ DATA_FRAME_ESC	equ "E"
 .data
 Parity			BYTE EVENPARITY,ODDPARITY,NOPARITY,MARKPARITY,SPACEPARITY
 szFromatTime	db  'P6%02d%02d%02d', 0
-szFormatCount	db	'%d', 0 
+szFormatSendFile	db	'A3#$%03d###Z', 0 
 szFormatLength	db	'%d',	0
 szCaption		db	'写入成功',0
 szFileName		db	MAX_PATH dup (?)
 szFilter		db	'Image Files(*.jpg)',0,'*.jpg',0,'All Files(*.*)',0,'*.*',0,0
 szDefExt		db	'jpg',0
-szNewFile	db	'_tmp_.jpg',0
+szNewFile	db	'_base64_tmp_.jpg',0
+szNewFileTest	db	'result.jpg',0
 szErrOpenFile	db	'无法打开源文件!',0
 szErrCreateFile	db	'无法创建新的文件!',0
 szSuccees	db	'文件转换成功，新的文本文件保存为',0dh,0ah,'%s',0
-szSucceesCap	db	'提示',0
-szDATA_FRAME_EOF	db	'Z', 0
+szSucceesCap	db	'提示',	0
+szFileSaveFlag	db '0',	0
+szFilePtr		DWORD 0h, 0
+szFileTotalLength		DWORD 0h, 0
+szStorageData	byte 204800 dup(?)
+szStorageData_Base64	byte 204800 dup(?)
+
 
 
 .data?
@@ -82,6 +89,7 @@ g_olRead		OVERLAPPED <>
 g_olWait		OVERLAPPED <>
 g_olWrite		OVERLAPPED <>
 g_hListBox		dd ? ;
+;szStorageData	dd ?
 sysTime SYSTEMTIME <>
 
 
@@ -114,7 +122,9 @@ _Init proc
 	invoke SendMessage,@hCombo,CB_ADDSTRING,0,CTXT("COM2")
 	invoke SendMessage,@hCombo,CB_ADDSTRING,0,CTXT("COM3")
 	invoke SendMessage,@hCombo,CB_ADDSTRING,0,CTXT("COM4")
-	invoke SendMessage,@hCombo,CB_SETCURSEL,0,0	;默认选择COM1
+	invoke SendMessage,@hCombo,CB_ADDSTRING,0,CTXT("COM5")
+	invoke SendMessage,@hCombo,CB_ADDSTRING,0,CTXT("COM6")
+	invoke SendMessage,@hCombo,CB_SETCURSEL,2,0	;默认选择COM3
 	;波特率
 	invoke GetDlgItem,hWinMain,IDC_COMBO2
 	mov @hCombo,eax
@@ -211,16 +221,28 @@ _Init EndP
 ;处理数据
 ;///////////////////////////////////////////////////////////////////////////////
 _HandleData proc _lpBuffer
-	invoke SendMessage,g_hListBox,LB_ADDSTRING,0,_lpBuffer
+	invoke 	SendMessage,g_hListBox,LB_ADDSTRING,0,_lpBuffer
 	Ret
 _HandleData EndP
+
+_MallocToFile proc _lpBuffer, _lpBufferLength
+
+	invoke	lstrcat,addr szStorageData, _lpBuffer
+	xor eax, eax
+	mov eax,  _lpBufferLength
+	add szFileTotalLength, eax
+	mov eax, szFileTotalLength
+
+	Ret
+_MallocToFile EndP
 
 ;///////////////////////////////////////////////////////////////////////////////
 ;读数据
 ;///////////////////////////////////////////////////////////////////////////////
 _ReadData proc
-	local @inbuffer[100]:BYTE
+	local @inbuffer[2048]:BYTE
 	local @dwErrFlag,@nBytesRead
+    local @szDataLengthBuffer
 	local @cs:COMSTAT
 	
 	invoke ClearCommError,hCom,addr @dwErrFlag,addr @cs
@@ -233,7 +255,13 @@ _ReadData proc
 		invoke RtlZeroMemory,addr @inbuffer,sizeof @inbuffer
 		invoke ReadFile,hCom,addr @inbuffer,@cs.cbInQue,addr @nBytesRead,addr g_olRead
 		.if eax
-			invoke _HandleData,addr @inbuffer
+		;	.if (szFileSaveFlag=="1")
+				xor eax, eax
+				mov eax, @cs.cbInQue
+				invoke _MallocToFile, addr @inbuffer, eax
+		;	.else
+				invoke _HandleData,addr @inbuffer
+		;	.endif
 		.else
 			invoke GetLastError
 			.if eax==ERROR_IO_PENDING
@@ -342,7 +370,7 @@ _OpenCom	proc uses esi
 			invoke SetWindowText,@hButton,CTXT("关闭")
 			mov g_bOpened,TRUE
 			invoke SetCommMask,hCom,EV_RXCHAR ;设置事件驱动类型
-			invoke SetupComm,hCom,1024,512 ;设置输入、输出缓冲区的大小
+			invoke SetupComm,hCom,4096,4096 ;设置输入、输出缓冲区的大小
 			invoke PurgeComm,hCom,PURGE_TXABORT+PURGE_RXABORT+PURGE_TXCLEAR+PURGE_RXCLEAR ;清干净输入、输出缓冲区
 			;超时设置
 			invoke RtlZeroMemory,addr @to,sizeof @to
@@ -501,9 +529,11 @@ _WriteLine:
 _FormatText	endp
 
 _ProcessFileBeforeSend	proc
-		local	@hFile,@hFileNew,@dwBytesRead
+		local	@hFile,@hFileNew,@dwBytesRead,@dwBytesWrite
 		local	@szNewFile[MAX_PATH]:byte
-		local	@szReadBuffer[2048]:byte
+		;local	@szReadBuffer[4096]:byte
+		;local	@szWriteBuffer[4096]:byte
+		local	@fileLength
 
 ;********************************************************************
 ; 打开文件
@@ -534,25 +564,34 @@ _ProcessFileBeforeSend	proc
 ; 循环读出文件并处理每个字节
 ;********************************************************************
 		xor	eax,eax
+		xor	edx,edx
+		invoke	GetFileSize,@hFile,NULL
+	
+		mov @fileLength, eax
 		mov	@dwBytesRead,eax
 		.while	TRUE
-			lea	esi,@szReadBuffer
-			invoke	ReadFile,@hFile,esi,sizeof @szReadBuffer,addr @dwBytesRead,0
+			mov 	ecx, @fileLength
+			mov		esi, offset szStorageData
+			invoke	ReadFile,@hFile,esi,ecx,addr @dwBytesRead,0
 			.break	.if ! @dwBytesRead
-			invoke	_FormatText,esi,@dwBytesRead,@hFileNew
+			invoke	GetFileSize,@hFile,NULL
+			invoke 	base64_encode,addr szStorageData,addr szStorageData_Base64,eax,0
+			mov ebx, eax
+			invoke	WriteFile,@hFileNew,addr szStorageData_Base64,ebx,addr @dwBytesWrite,NULL
 		.endw
+		
+		invoke RtlZeroMemory,addr szStorageData,sizeof szStorageData
+		invoke RtlZeroMemory,addr szStorageData_Base64,sizeof szStorageData_Base64
+		
 		invoke	CloseHandle,@hFile
 		invoke	CloseHandle,@hFileNew
-		;invoke	wsprintf,addr @szReadBuffer,addr szSuccees,addr @szNewFile
-		;invoke	MessageBox,hWinMain,addr @szNewFile,addr szSucceesCap,MB_OK
 		ret
 _ProcessFileBeforeSend	EndP
 
 _SendFile	proc	uses ebx esi edi _fileName
 	local	@maxByteEachProcess
-	local	@szReadBuffer[4096]:byte
+	local	@szReadBuffer[1024]:byte
 	local	@szSendBuffer[1+3+512+1]:byte
-	local	@szSendBufferForEmpty[1+3+512+1]:byte
 	local	@szSendBufferSuffix
 	local	@szDataLengthBuffer
 	local	@hFileHandle
@@ -628,7 +667,6 @@ _SendFile	proc	uses ebx esi edi _fileName
 			xor eax, eax
 			mov eax, @maxByteEachProcess
 			add eax, 3
-		;	invoke	MessageBox, hWinMain, addr @szSendBuffer, addr szCaption, MB_OK
 			invoke	_WriteData, addr @szSendBuffer, eax
 			dec @sendCount
 		.else
@@ -689,7 +727,6 @@ _SendFile	proc	uses ebx esi edi _fileName
 			xor eax, eax
 			mov eax, @maxByteEachProcess
 			add eax, 3
-			;invoke	MessageBox, hWinMain, addr @szSendBuffer, addr szCaption, MB_OK
 			invoke	_WriteData, addr @szSendBuffer, eax
 			.break
 		.endif
@@ -697,23 +734,91 @@ _SendFile	proc	uses ebx esi edi _fileName
 		.break	.if ! @ByteRead
 	.endw
 	invoke	MessageBox, hWinMain, addr szCaption, addr szCaption, MB_OK
-	;invoke	wsprintf,addr @szReadBuffer,addr szFormatCount,sizeof @szSendBuffer
-	;invoke	MessageBox, hWinMain, addr @szSendBuffer, addr szCaption, MB_OK
 	invoke	CloseHandle, @hFileHandle
 	ret
 _SendFile EndP
+_WriteToFile	proc
+	local @hFileNew
+	local @dwBytesWrite
+	local @saveCount
+	local @leftData
+	;local @sendbuff[255]:CHAR
+	;local @outbuff[4096]:byte
 
+	;mov	eax, szFileTotalLength
+	;mov	ecx, 2048
+	;div	ecx
+	;mov @leftData, edx
+	;mov @saveCount, eax
+	
+	;mov	ebx, szFileTotalLength
+	;invoke	base64_decode,addr szStorageData, addr szStorageData_Base64, ebx
+	
 
+	;xor ecx, ecx
+	;xor edx, edx
+	;xor ebx, ebx
+	;mov	ecx, 2048
+	;div	ecx
+	;mov @leftData, edx
+	;mov @saveCount, eax
+	
+
+	invoke	CreateFile,addr szNewFileTest,CREATE_ALWAYS,FILE_SHARE_READ,\
+		0,OPEN_ALWAYS,FILE_ATTRIBUTE_NORMAL,0
+	.if	eax ==	INVALID_HANDLE_VALUE
+		invoke	MessageBox,hWinMain,addr szErrCreateFile,NULL,MB_OK or MB_ICONEXCLAMATION
+		ret
+	.endif
+
+	mov	@hFileNew,eax
+	invoke	SetFilePointer,@hFileNew,0,NULL,FILE_BEGIN
+	mov	edx, szFileTotalLength
+	invoke	base64_decode,addr szStorageData, addr szStorageData_Base64, edx
+	mov edx, eax
+	invoke	WriteFile,@hFileNew,addr szStorageData_Base64,edx,addr @dwBytesWrite,NULL
+	;.while TRUE
+	;	.if (@saveCount>0)
+	;		invoke	FlushFileBuffers, @hFileNew
+	;		invoke	WriteFile,@hFileNew,ebx,2048,addr @dwBytesWrite,NULL
+	;		add ebx, 2048
+	;		dec @saveCount
+	;	.else
+	;		mov ecx, @leftData
+	;		;.break .if ! ecx
+	;		invoke	FlushFileBuffers, @hFileNew
+	;		invoke	WriteFile,@hFileNew,ebx,ecx,addr @dwBytesWrite,NULL
+	;		.break
+	;	.endif
+	;.endw
+
+	invoke	CloseHandle,@hFileNew
+	Ret
+_WriteToFile EndP
 _ReadFile	proc	uses ebx esi edi _fileName
-	local @sendbuff[255]:BYTE
-	mov [@sendbuff+0], "A"; 移动进缓冲区
-	mov [@sendbuff+1], "1"		
-	mov [@sendbuff+2], "#"		
-	mov [@sendbuff+3], "$"		
-	mov [@sendbuff+4], "Z"
-	mov eax, sizeof @sendbuff
-	invoke _WriteData,addr @sendbuff,eax
+	local @sendbuff[25]:CHAR
+	local @sect
+	mov szFileSaveFlag, "1"
+	mov @sect, 50
+	xor ebx, ebx
+	mov ebx, @sect
+	xor eax, eax
+	;invoke	GlobalAlloc,GMEM_ZEROINIT or GMEM_FIXED,409600
+	;.if	eax
+		;mov szStorageData, eax
+	;.endif
+	.while TRUE
+		invoke	wsprintf,addr @sendbuff,addr szFormatSendFile,ebx
+		invoke _WriteData,addr @sendbuff,11
+		inc ebx
+		invoke Sleep, 300
+		.break	.if (ebx>105)
+	.endw
+	mov szFileSaveFlag, "0"
+	invoke _WriteToFile
+	Ret
 _ReadFile EndP
+
 
 ;///////////////////////////////////////////////////////////////////////////////
 _ProcDlgMain proc uses ebx edi esi hWnd,wMsg,wParam,lParam	
@@ -838,10 +943,10 @@ _ProcDlgMain proc uses ebx edi esi hWnd,wMsg,wParam,lParam
 			invoke MessageBox, NULL, addr @timebuff, addr @timebuff, MB_OK
 		.elseif ax == BUTTON_SAVE_FILE
 			invoke	_OpenFileSelectUI
-			;invoke	_ProcessFileBeforeSend
+			invoke	_ProcessFileBeforeSend
 			invoke	CreateThread, NULL, 0, offset _SendFile, NULL, NULL, addr @ThreadIDSaveFile
 		.elseif ax == BUTTON_READ_FILE
-			invoke	CreateThread, NULL, 0, offset _ReadFile, NULL, NULL, addr @ThreadIDSaveFile
+			invoke	CreateThread, NULL, 0, offset _ReadFile, NULL, NULL, addr @ThreadIDReadFile
 		.endif
 
 	.endif
